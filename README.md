@@ -28,8 +28,12 @@ uv tool install .        # 프로젝트 디렉터리(G:\project\python\prompt_re
 이후 터미널 어디서든:
 
 ```bash
-prompt-reader            # 서버 실행 + 브라우저 자동 오픈
+prompt-reader                # 기본 22000 포트로 서버 실행 + 브라우저 자동 오픈
+prompt-reader --port 23000   # 포트 지정 실행
+prompt-reader --host 0.0.0.0 # LAN의 다른 기기에서 접속 허용
 ```
+
+`uv run python main.py --port 23000` 처럼 개발 실행에서도 같은 옵션을 씁니다.
 
 - 코드 수정 후 반영(재설치): `uv tool install --force .`
 - 제거: `uv tool uninstall prompt-reader`
@@ -90,6 +94,7 @@ uv run python samples/make_samples.py  # samples/ 아래 샘플 PNG 재생성
 
 ## 참고
 
-- LAN의 다른 기기에서 접속하려면 `main.py`의 `host="127.0.0.1"`을 `"0.0.0.0"`으로 변경
-  (단, http + 로컬호스트가 아니면 브라우저 Clipboard API가 차단될 수 있음 — 폴백 복사 동작)
-- 포트는 22000으로 고정, 필요 시 `main.py`의 `port` 수정
+- 포트 기본값은 22000, 호스트 기본값은 127.0.0.1 — `--port` / `--host` 옵션으로 변경
+- `--host 0.0.0.0`으로 LAN 접속을 허용해도 자동으로 열리는 브라우저는 루프백(127.0.0.1) 주소로 연다
+- 다른 기기에서 http + localhost 가 아닌 주소로 접속하면 브라우저 Clipboard API가 차단될 수 있음
+  (폴백 복사는 동작)
