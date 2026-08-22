@@ -1,0 +1,22 @@
+[project]
+name = "prompt-reader"
+version = "0.1.0"
+description = "PNG 이미지에서 Stable Diffusion/ComfyUI 계열 생성 프롬프트 메타데이터를 추출해 보여주는 로컬 웹 앱"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+prompt-reader = "main:serve"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# 플랫 레이아웃: 모듈 두 개와 프론트엔드 정적 파일을 휠에 그대로 포함
+only-include = ["main.py", "pngmeta.py", "static"]

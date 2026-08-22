@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Reader</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖼️</text></svg>">
+<style>
+:root {
+  --bg: #0e1016;
+  --panel: #161923;
+  --panel-2: #1b1f2c;
+  --border: #272c3d;
+  --text: #e8eaf2;
+  --muted: #9aa1b5;
+  --accent: #7c6cf0;
+  --accent-2: #5a8bf7;
+  --ok: #58c98b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  line-height: 1.5;
+}
+.container { max-width: 1080px; margin: 0 auto; padding: 32px 20px 64px; }
+header h1 {
+  margin: 0;
+  font-size: 32px;
+  letter-spacing: -0.5px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.subtitle { color: var(--muted); margin: 8px 0 24px; font-size: 14px; }
+
+.controls { display: flex; gap: 14px; align-items: stretch; margin-bottom: 20px; }
+.btn {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: filter .15s;
+}
+.btn:hover { filter: brightness(1.25); }
+.btn:disabled { opacity: .6; cursor: default; }
+.btn.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 18px;
+  white-space: nowrap;
+}
+.btn.copy { padding: 5px 12px; font-size: 12.5px; }
+.btn.copied { border-color: var(--ok); color: var(--ok); }
+
+.dropzone {
+  flex: 1;
+  border: 2px dashed var(--border);
+  border-radius: 14px;
+  padding: 26px 20px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--accent);
+  background: rgba(124, 108, 240, .07);
+}
+.dropzone.loading { pointer-events: none; opacity: .6; }
+.dz-icon { font-size: 26px; }
+.dz-title { font-weight: 600; margin-top: 6px; }
+.dz-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+.status { border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; font-size: 14px; }
+.status.error { background: rgba(247, 112, 112, .12); border: 1px solid rgba(247, 112, 112, .4); color: #ffb3b3; }
+.status.info { background: rgba(90, 139, 247, .12); border: 1px solid rgba(90, 139, 247, .4); color: #bcd2ff; }
+.hidden { display: none !important; }
+
+.result { display: grid; grid-template-columns: minmax(300px, 430px) 1fr; gap: 20px; align-items: start; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+.image-panel img {
+  display: block;
+  max-width: 100%;
+  max-height: 66vh;
+  margin: 0 auto;
+  border-radius: 8px;
+}
+.image-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: center; }
+.chip {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip.source { color: #c9b8ff; border-color: rgba(124, 108, 240, .5); }
+
+.prompts-panel { display: flex; flex-direction: column; gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.card-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.card-head h2 .en { color: var(--muted); font-weight: 500; font-size: 12px; margin-left: 6px; }
+.prompt-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 13px;
+  color: #d7dbeb;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 300px;
+  overflow: auto;
+}
+.notice {
+  background: rgba(250, 200, 90, .1);
+  border: 1px solid rgba(250, 200, 90, .35);
+  color: #ffe3a3;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+details.raw summary { cursor: pointer; color: var(--muted); font-size: 14px; user-select: none; }
+.raw-toolbar { display: flex; justify-content: flex-end; margin: 10px 0 4px; }
+.raw-item { margin-top: 10px; }
+.raw-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 10px; }
+.raw-actions { display: flex; gap: 6px; }
+.raw-key {
+  font-size: 12.5px;
+  color: #c9b8ff;
+  font-family: Consolas, monospace;
+  background: var(--panel-2);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  background: #22273a;
+  border: 1px solid var(--accent);
+  padding: 10px 22px;
+  border-radius: 10px;
+  font-size: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .45);
+  z-index: 50;
+}
+@media (max-width: 880px) {
+  .result { grid-template-columns: 1fr; }
+  .controls { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Prompt Reader</h1>
+    <p class="subtitle">ComfyUI · Stable Diffusion 계열 PNG 이미지에서 생성 프롬프트 메타데이터를 추출합니다</p>
+  </header>
+
+  <input type="file" id="fileInput" accept="image/png,.png" hidden>
+  <section class="controls">
+    <button id="openBtn" class="btn primary" type="button">파일 열기</button>
+    <div id="dropZone" class="dropzone" role="button" tabindex="0" aria-label="PNG 파일 드롭 영역">
+      <div class="dz-icon">🖼️</div>
+      <div class="dz-title" id="dzTitle">여기에 PNG 파일을 끌어다 놓으세요</div>
+      <div class="dz-sub">또는 이 영역을 클릭해서 파일을 선택할 수 있어요</div>
+    </div>
+  </section>
+
+  <div id="statusBar" class="status hidden" role="status"></div>
+
+  <section id="result" class="result hidden">
+    <div class="panel image-panel">
+      <img id="preview" alt="불러온 이미지 미리보기">
+      <div class="image-meta">
+        <span id="metaFilename" class="chip"></span>
+        <span id="metaSize" class="chip"></span>
+        <span id="metaSource" class="chip source"></span>
+      </div>
+    </div>
+
+    <div class="prompts-panel">
+      <div id="notFound" class="notice hidden">
+        이 이미지에서 프롬프트 메타데이터를 찾지 못했습니다.
+        메타데이터가 제거되었거나 지원하지 않는 프로그램으로 생성된 이미지일 수 있어요.
+      </div>
+
+      <div id="posCard" class="card">
+        <div class="card-head">
+          <h2>긍정 프롬프트 <span class="en">Positive Prompt</span></h2>
+          <button class="btn copy" type="button" data-copy-target="posText">복사</button>
+        </div>
+        <pre id="posText" class="prompt-text"></pre>
+      </div>
+
+      <div id="negCard" class="card">
+        <div class="card-head">
+          <h2>부정 프롬프트 <span class="en">Negative Prompt</span></h2>
+          <button class="btn copy" type="button" data-copy-target="negText">복사</button>
+        </div>
+        <pre id="negText" class="prompt-text"></pre>
+      </div>
+
+      <div id="setCard" class="card">
+        <div class="card-head">
+          <h2>설정 <span class="en">Settings</span></h2>
+          <button class="btn copy" type="button" data-copy-target="setText">복사</button>
+        </div>
+        <pre id="setText" class="prompt-text"></pre>
+      </div>
+
+      <details id="rawDetails" class="card raw">
+        <summary>원본 메타데이터 청크 보기</summary>
+        <div class="raw-toolbar">
+          <button class="btn copy" type="button" data-copy-raw="__all__">전체 복사</button>
+        </div>
+        <div id="rawList"></div>
+      </details>
+    </div>
+  </section>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const fileInput = $('fileInput');
+  const openBtn = $('openBtn');
+  const dropZone = $('dropZone');
+  const dzTitle = $('dzTitle');
+  const statusBar = $('statusBar');
+  const result = $('result');
+  const preview = $('preview');
+  const notFound = $('notFound');
+  const cards = {
+    positive: { card: $('posCard'), text: $('posText') },
+    negative: { card: $('negCard'), text: $('negText') },
+    settings: { card: $('setCard'), text: $('setText') },
+  };
+  const rawDetails = $('rawDetails');
+  const rawList = $('rawList');
+  const toast = $('toast');
+  const DZ_TITLE = dzTitle.textContent;
+  let objectUrl = null;
+  let currentRaw = {};
+  let currentPretty = {};
+  let toastTimer = null;
+
+  function showToast(message) {
+    toast.textContent = message;
+    toast.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.add('hidden'), 1800);
+  }
+
+  function setStatus(message, kind) {
+    statusBar.textContent = message;
+    statusBar.className = 'status ' + kind;
+  }
+  const hideStatus = () => { statusBar.className = 'status hidden'; };
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* 폴백으로 진행 */ }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-copy-target], [data-copy-raw]');
+    if (!btn) return;
+    let text;
+    if (btn.dataset.copyTarget) {
+      text = $(btn.dataset.copyTarget).textContent;
+    } else if (btn.dataset.copyRaw === '__all__') {
+      text = JSON.stringify(currentRaw, null, 2);
+    } else {
+      text = currentRaw[btn.dataset.copyRaw] || '';
+    }
+    if (!text || !text.trim()) { showToast('복사할 내용이 없습니다'); return; }
+    const ok = await copyText(text);
+    if (ok) {
+      showToast('클립보드에 복사되었습니다');
+      const label = btn.textContent;
+      btn.textContent = '복사됨 ✓';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = label; btn.classList.remove('copied'); }, 1200);
+    } else {
+      showToast('복사에 실패했습니다');
+    }
+  });
+
+  function setLoading(on) {
+    dropZone.classList.toggle('loading', on);
+    openBtn.disabled = on;
+    dzTitle.textContent = on ? '이미지 분석 중...' : DZ_TITLE;
+  }
+
+  function fillCard(entry, value) {
+    if (value && value.trim()) {
+      entry.text.textContent = value;
+      entry.card.classList.remove('hidden');
+    } else {
+      entry.text.textContent = '';
+      entry.card.classList.add('hidden');
+    }
+  }
+
+  // 새 파일을 로드하기 시작할 때 이전 결과를 모두 치운다
+  function resetResult() {
+    result.classList.add('hidden');
+    notFound.classList.add('hidden');
+    rawDetails.classList.add('hidden');
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+    preview.removeAttribute('src');
+    rawList.innerHTML = '';
+    currentRaw = {};
+    currentPretty = {};
+    for (const entry of Object.values(cards)) {
+      entry.text.textContent = '';
+      entry.card.classList.add('hidden');
+    }
+  }
+
+  async function handleFile(file) {
+    if (!file) return;
+    resetResult();
+    if (!(file.type === 'image/png' || /\.png$/i.test(file.name))) {
+      setStatus('PNG 파일만 지원합니다. 확장자가 .png인 이미지를 올려주세요.', 'error');
+      return;
+    }
+    setLoading(true);
+    hideStatus();
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const res = await fetch('/api/extract', { method: 'POST', body: form });
+      let data = {};
+      try { data = await res.json(); } catch (e) { /* 아래에서 상태 코드로 처리 */ }
+      if (!res.ok) throw new Error(data.detail || ('요청 실패 (' + res.status + ')'));
+      renderResult(file, data);
+    } catch (err) {
+      setStatus(err.message || '파일을 읽는 중 문제가 발생했습니다.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderResult(file, data) {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    preview.src = objectUrl;
+
+    const nameChip = $('metaFilename');
+    nameChip.textContent = data.filename || file.name;
+    nameChip.title = nameChip.textContent;
+    $('metaSize').textContent =
+      (data.width || '?') + ' × ' + (data.height || '?') + ' px · ' + formatBytes(file.size);
+    $('metaSource').textContent = data.source || '출처 정보 없음';
+
+    notFound.classList.toggle('hidden', !!data.found);
+    fillCard(cards.positive, data.positive);
+    fillCard(cards.negative, data.negative);
+    fillCard(cards.settings, data.settings);
+
+    currentRaw = data.chunks || {};
+    currentPretty = data.pretty_chunks || {};
+    rawList.innerHTML = '';
+    const keys = Object.keys(currentRaw);
+    rawDetails.classList.toggle('hidden', keys.length === 0);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const raw = currentRaw[key];
+      // 서버가 정렬본을 만들어 준 JSON 청크만 정렬 보기 제공
+      // (Python JSON 확장 표기 NaN 등은 브라우저 JSON.parse가 거부해서 서버에서 처리)
+      const pretty = (currentPretty[key] !== undefined && currentPretty[key] !== raw)
+        ? currentPretty[key] : null;
+
+      const item = document.createElement('div');
+      item.className = 'raw-item';
+      const head = document.createElement('div');
+      head.className = 'raw-head';
+      const keyEl = document.createElement('span');
+      keyEl.className = 'raw-key';
+      keyEl.textContent = key;
+      const actions = document.createElement('span');
+      actions.className = 'raw-actions';
+
+      const pre = document.createElement('pre');
+      pre.className = 'prompt-text';
+      pre.id = 'rawpre' + i;
+
+      if (pretty !== null) {
+        // 기본: 정렬된 JSON 보기, 버튼으로 원문(한 줄)과 전환
+        let showingPretty = true;
+        pre.textContent = pretty;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'btn copy';
+        toggle.textContent = '원문 보기';
+        toggle.addEventListener('click', () => {
+          showingPretty = !showingPretty;
+          pre.textContent = showingPretty ? pretty : raw;
+          toggle.textContent = showingPretty ? '원문 보기' : '정렬 보기';
+        });
+        actions.appendChild(toggle);
+      } else {
+        pre.textContent = raw;
+      }
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'btn copy';
+      copyBtn.textContent = '복사';
+      copyBtn.dataset.copyTarget = pre.id;  // 현재 화면에 보이는 내용을 복사
+      actions.appendChild(copyBtn);
+
+      head.appendChild(keyEl);
+      head.appendChild(actions);
+      item.appendChild(head);
+      item.appendChild(pre);
+      rawList.appendChild(item);
+    }
+    result.classList.remove('hidden');
+  }
+
+  openBtn.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  fileInput.addEventListener('change', () => {
+    handleFile(fileInput.files[0]);
+    fileInput.value = '';
+  });
+  ['dragenter', 'dragover'].forEach((ev) =>
+    dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add('dragover'); })
+  );
+  ['dragleave', 'drop'].forEach((ev) =>
+    dropZone.addEventListener(ev, () => dropZone.classList.remove('dragover'))
+  );
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    handleFile(e.dataTransfer.files[0]);
+  });
+  // 드롭 존을 벗어난 드롭에 브라우저가 파일을 열어버리지 않도록 방지
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => e.preventDefault());
+})();
+</script>
+</body>
+</html>
