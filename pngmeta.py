@@ -115,6 +115,10 @@ def _parse_a1111(text: str) -> dict:
 # --- ComfyUI -----------------------------------------------------------------
 
 _TEXT_INPUT_KEYS = ("text", "text_g", "text_l")
+# 링크를 거슬러 올라갈 때 값으로 인정할 정적 텍스트 위젯 키
+_STATIC_TEXT_KEYS = ("text", "text_g", "text_l", "string", "value", "prompt")
+# 실행 결과를 자기 위젯에 되써 넣는(=직전 실행 값이 남는) 미리보기 노드
+_ECHO_NODE_HINTS = ("showtext", "showanything", "preview", "display")
 # ConditioningCombine / ControlNetApply 처럼 positive/negative를 그대로 흘려보내는 노드의 입력 키
 _PASSTHROUGH_KEYS = (
     "positive",
@@ -149,53 +153,35 @@ def _encoded_texts(node: dict, nodes: dict) -> list[str]:
     return found
 
 
-def _resolve_linked_text(ref, nodes: dict) -> str | None:
-    """링크(["노드ID", 슬롯])가 가리키는 결과 텍스트를 그래프에서 찾는다.
+def _resolve_linked_text(ref, nodes: dict, depth: int = 0) -> str | None:
+    """링크(["노드ID", 슬롯])를 거슬러 올라가 정적 텍스트 위젯 값을 찾는다.
 
-    ComfyUI API 그래프는 노드의 '출력'을 문자열로 저장하지 않아서, 그 출력을
-    소비한 다른 노드(ShowText 계열 미리보기 노드의 ``text_0`` 등)에 남은 값을
-    대신 사용하고, 없으면 소스 노드 자체의 문자열 입력으로 폴백한다.
+    ComfyUI API 그래프는 노드의 '출력'을 저장하지 않는다. ShowText 계열에 남은
+    ``text_0``은 큐 제출 시점의 위젯 값, 즉 **직전 실행의 결과**다. LLM이나
+    와일드카드처럼 매 실행마다 결과가 바뀌는 노드에서는 실제 사용된 프롬프트와
+    달라지므로 사용하지 않는다.
     """
-    node_id = str(ref[0])
-    slot = ref[1] if len(ref) > 1 else 0
+    if depth > 5 or not isinstance(ref, (list, tuple)) or not ref:
+        return None
+    node = nodes.get(str(ref[0]))
+    if not isinstance(node, dict):
+        return None
+    inputs = node.get("inputs")
+    if not isinstance(inputs, dict):
+        return None
 
-    best_score = None
-    best_text = None
+    class_type = str(node.get("class_type", "")).lower()
+    is_echo = any(hint in class_type for hint in _ECHO_NODE_HINTS)
 
-    def consider(text: str, rank: int, key_bonus: int = 0) -> None:
-        nonlocal best_score, best_text
-        text = text.strip()
-        if not text:
-            return
-        score = (rank, key_bonus, len(text))
-        if best_score is None or score > best_score:
-            best_score, best_text = score, text
-
-    for node in nodes.values():
-        inputs = node.get("inputs")
-        if not isinstance(inputs, dict):
-            continue
-        consumes = any(
-            isinstance(v, (list, tuple)) and len(v) >= 2
-            and str(v[0]) == node_id and v[1] == slot
-            for v in inputs.values()
-        )
-        if not consumes:
-            continue
-        class_type = str(node.get("class_type", "")).lower()
-        for k, v in inputs.items():
-            if isinstance(v, str):
-                is_echo = "showtext" in class_type and k.startswith("text")
-                consider(v, 2 if is_echo else 1)
-
-    source = nodes.get(node_id)
-    source_inputs = source.get("inputs") if isinstance(source, dict) else None
-    if isinstance(source_inputs, dict):
-        for k, v in source_inputs.items():
-            if isinstance(v, str):
-                consider(v, 0, 1 if k in ("text", "text_0", "string", "value") else 0)
-
-    return best_text
+    for key in _STATIC_TEXT_KEYS:
+        value = inputs.get(key)
+        if isinstance(value, str) and value.strip() and not is_echo:
+            return value.strip()
+        if isinstance(value, (list, tuple)) and value:
+            resolved = _resolve_linked_text(value, nodes, depth + 1)
+            if resolved:
+                return resolved
+    return None
 
 
 def _follow_conditioning(ref, nodes: dict, depth: int = 0) -> list[str]:
@@ -400,6 +386,47 @@ def pretty_json(text: str) -> str | None:
     return json.dumps(parsed, indent=2, ensure_ascii=False)
 
 
+# 프롬프트 폴백 탐색에서 제외할, 이미 전용 파서가 있는 청크 키
+_HANDLED_CHUNK_KEYS = {
+    "prompt",
+    "workflow",
+    "parameters",
+    "sd-metadata",
+    "Title",
+    "Description",
+    "Comment",
+    "Software",
+    "Source",
+    "Generation time",
+}
+
+
+def _chunk_prompt_fallback(texts: dict[str, str]) -> tuple[str | None, str | None]:
+    """AddMetaData(Mikey) 같은 노드가 남긴 커스텀 청크에서 프롬프트를 찾는다.
+
+    ComfyUI 그래프로는 복원할 수 없는 동적 프롬프트(LLM 출력, 와일드카드 전개)를
+    이런 청크가 실행 시점의 실제 값으로 담고 있다.
+    """
+    for key, value in texts.items():
+        lowered = key.lower()
+        if key in _HANDLED_CHUNK_KEYS or "prompt" not in lowered:
+            continue
+        if "negative" in lowered:
+            continue
+        text = value.strip()
+        # Mikey의 AddMetaData는 값을 JSON 문자열로 감싸 기록한다
+        if text.startswith('"') and text.endswith('"'):
+            try:
+                decoded = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                decoded = None
+            if isinstance(decoded, str):
+                text = decoded.strip()
+        if text:
+            return text, key
+    return None, None
+
+
 def extract_prompt_info(png_bytes: bytes) -> dict:
     """PNG 바이트를 받아 프롬프트 정보 구조를 반환한다."""
     width, height, texts = read_png_info(png_bytes)
@@ -409,6 +436,7 @@ def extract_prompt_info(png_bytes: bytes) -> dict:
         "source": None,
         "found": False,
         "positive": None,
+        "positive_source": None,
         "negative": None,
         "settings": None,
         "chunks": texts,
@@ -453,5 +481,12 @@ def extract_prompt_info(png_bytes: bytes) -> dict:
         result["positive"] = parsed.get("positive")
         result["negative"] = parsed.get("negative")
         result["settings"] = parsed.get("settings")
-        result["found"] = bool(result["positive"] or result["negative"])
+
+    if not result["positive"]:
+        text, key = _chunk_prompt_fallback(texts)
+        if text:
+            result["positive"] = text
+            result["positive_source"] = key
+
+    result["found"] = bool(result["positive"] or result["negative"])
     return result

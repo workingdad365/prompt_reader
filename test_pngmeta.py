@@ -95,15 +95,26 @@ def test_comfyui_no_sampler_fallback():
 
 
 def test_comfyui_linked_prompt_generator():
-    """text 입력이 링크(LLM 생성기 등)인 경우 ShowText 노드의 결과값(text_0)으로 복원."""
+    """ShowText의 text_0은 직전 실행의 값이므로 프롬프트로 쓰지 않는다."""
     info = extract_prompt_info(make_png({"prompt": json.dumps(COMFY_LLM_GRAPH)}))
-    assert info["positive"].startswith("A cute young Asian woman")
+    assert info["positive"] is None
     assert info["negative"].startswith("blurry, ugly, bad")
     assert "z_image_turbo_bf16.safetensors" in info["settings"]  # UNETLoader → Model
     assert "qwen_3_4b.safetensors" in info["settings"]  # CLIPLoader → CLIP
     assert "ae.safetensors" in info["settings"]  # VAELoader → VAE
     assert "Steps: 8" in info["settings"]
     assert "Seed: 773810126793850" in info["settings"]
+
+
+def test_comfyui_custom_chunk_prompt():
+    """AddMetaData 등이 남긴 커스텀 청크는 실행 시점 값이므로 프롬프트로 쓴다."""
+    info = extract_prompt_info(make_png({
+        "prompt": json.dumps(COMFY_LLM_GRAPH),
+        "Final Prompt": json.dumps("A woman standing among stone corridors"),
+    }))
+    assert info["positive"] == "A woman standing among stone corridors"
+    assert info["positive_source"] == "Final Prompt"
+    assert info["found"] is True
 
 
 def test_comfyui_linked_text_fallback_source():
