@@ -1,7 +1,11 @@
 # Prompt Reader
 
 PNG 이미지에 포함된 생성 프롬프트 메타데이터(ComfyUI, Stable Diffusion WebUI 계열 등)를 추출해서
-보여주고, 버튼 클릭 한 번으로 클립보드에 복사해 주는 로컬 웹 앱입니다.
+보여주고, 버튼 클릭 한 번으로 클립보드에 복사해 주는 로컬 웹 앱.
+
+![](screenshot.webp)
+
+
 
 - Python 3.13.x 고정 (`.python-version`, `requires-python = ">=3.13,<3.14"`)
 - 패키지 관리: [uv](https://docs.astral.sh/uv/)
