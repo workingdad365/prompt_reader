@@ -129,6 +129,123 @@ def test_comfyui_linked_text_fallback_source():
     assert info["positive"] == "template with __wildcard__"
 
 
+def qwen_graph(refine=False):
+    return {
+        "459:452": {"class_type": "TextEncodeQwenImage21", "inputs": {
+            "prompt": ["459:472", 0], "negative_prompt": "blur"}},
+        "459:472": {"class_type": "PreviewAny", "inputs": {
+            "source": ["459:474", 0], "text": "stale preview"}},
+        "459:474": {"class_type": "ComfySwitchNode", "inputs": {
+            "switch": refine, "on_false": "원본 portrait", "on_true": ["459:471", 0]}},
+        "459:471": {"class_type": "TextGenerate", "inputs": {
+            "prompt": "원본 portrait", "system_prompt": "not an image prompt"}},
+        "459:458": {"class_type": "KSampler", "inputs": {
+            "positive": ["459:452", 0], "negative": ["459:452", 1]}},
+    }
+
+
+def test_qwen_refine_off():
+    info = extract_prompt_info(make_png({"prompt": json.dumps(qwen_graph())}))
+    assert info["found"] is True
+    assert info["positive"] == "원본 portrait"
+    assert info["negative"] == "blur"
+    assert info["prompt_warning"] is None
+
+
+def test_qwen_refine_on_original_is_labeled():
+    info = extract_prompt_info(make_png({"prompt": json.dumps(qwen_graph(True))}))
+    assert info["found"] is True
+    assert info["positive"] == "원본 portrait"
+    assert info["negative"] == "blur"
+    assert "보강 전" in info["prompt_warning"]
+
+
+def test_qwen_final_chunk_overrides_original():
+    info = extract_prompt_info(make_png({
+        "prompt": json.dumps(qwen_graph(True)),
+        "Final Prompt": json.dumps("actual enhanced output"),
+    }))
+    assert info["positive"] == "actual enhanced output"
+    assert info["positive_source"] == "Final Prompt"
+    assert info["prompt_warning"] is None
+
+
+def test_qwen_direct_and_empty_positive():
+    graph = qwen_graph()
+    graph["459:452"]["inputs"]["prompt"] = "direct prompt"
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] == "direct prompt"
+    assert info["negative"] == "blur"
+    graph["459:452"]["inputs"]["prompt"] = ""
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] is None
+    assert info["negative"] == "blur"
+
+
+def test_qwen_unknown_switch_and_cycle():
+    graph = qwen_graph()
+    graph["459:474"]["inputs"]["switch"] = ["unknown", 0]
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] is None  # 선택되지 않은 분기를 추측하지 않는다
+    graph["459:474"]["inputs"]["switch"] = False
+    graph["459:474"]["inputs"]["on_false"] = ["459:472", 0]
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] is None
+
+
+def test_qwen_no_sampler():
+    graph = qwen_graph(True)
+    del graph["459:458"]
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] == "원본 portrait"
+    assert info["prompt_warning"]
+
+
+def krea_graph(refine=True, style=False):
+    graph = qwen_graph(refine)
+    graph["459:452"] = {"class_type": "CLIPTextEncode", "inputs": {"text": ["style-switch", 0]}}
+    graph["459:458"]["inputs"]["negative"] = ["zero", 0]
+    graph["zero"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["459:452", 0]}}
+    graph["refine"] = {"class_type": "PrimitiveBoolean", "inputs": {"value": refine}}
+    graph["style"] = {"class_type": "PrimitiveBoolean", "inputs": {"value": style}}
+    graph["459:474"]["inputs"]["switch"] = ["refine", 0]
+    graph["459:471"]["inputs"]["prompt"] = ["instruction", 0]
+    graph["instruction"] = {"class_type": "StringConcatenate", "inputs": {
+        "string_a": ["prefix", 0], "string_b": "원본 portrait", "delimiter": ""}}
+    graph["prefix"] = {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "Expand this:\n\n"}}
+    graph["style-switch"] = {"class_type": "ComfySwitchNode", "inputs": {
+        "switch": ["style", 0], "on_false": ["459:472", 0], "on_true": ["suffix", 0]}}
+    graph["suffix"] = {"class_type": "StringConcatenate", "inputs": {
+        "string_a": ["459:472", 0], "string_b": "sketch style", "delimiter": ", "}}
+    return graph
+
+
+def test_krea_linked_switches_and_concatenation():
+    for refine in (False, True):
+        for style in (False, True):
+            info = extract_prompt_info(make_png({"prompt": json.dumps(krea_graph(refine, style))}))
+            expected = ("Expand this:\n\n" if refine else "") + "원본 portrait"
+            expected += ", sketch style" if style else ""
+            assert info["positive"] == expected
+            assert bool(info["prompt_warning"]) == refine
+            assert info["negative"] is None  # ZeroOut은 부정 프롬프트 텍스트가 아니다
+            assert info["found"] is True
+
+
+def test_krea_unresolved_and_empty_concatenation():
+    graph = krea_graph(False, True)
+    graph["suffix"]["inputs"]["string_b"] = ["missing", 0]
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] is None  # 일부만 읽고 완전한 프롬프트로 표시하지 않는다
+    graph["suffix"]["inputs"]["string_b"] = ""
+    graph["suffix"]["inputs"]["delimiter"] = ""
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] == "원본 portrait"
+    graph["style"]["inputs"]["value"] = ["style", 0]
+    info = extract_prompt_info(make_png({"prompt": json.dumps(graph)}))
+    assert info["positive"] is None
+
+
 def test_pretty_json_handles_nan_and_escapes():
     """Python JSON 확장(NaN)과 \\uXXXX 이스케이프를 정렬 시 해석해야 한다."""
     raw = '{"prompt_context": "\\uc8fc\\uc5b4\\uc9c0\\ub294 \\ubb38\\uc7a5", "is_changed": [NaN]}'

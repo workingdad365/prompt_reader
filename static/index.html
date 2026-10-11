@@ -204,6 +204,8 @@ details.raw summary { cursor: pointer; color: var(--muted); font-size: 14px; use
         메타데이터가 제거되었거나 지원하지 않는 프로그램으로 생성된 이미지일 수 있어요.
       </div>
 
+      <div id="promptWarning" class="notice hidden" role="status"></div>
+
       <div id="posCard" class="card">
         <div class="card-head">
           <h2>긍정 프롬프트 <span class="en">Positive Prompt</span></h2>
@@ -395,6 +397,13 @@ details.raw summary { cursor: pointer; color: var(--muted); font-size: 14px; use
     $('metaSource').textContent = data.source || '출처 정보 없음';
 
     notFound.classList.toggle('hidden', !!data.found);
+    if (data.source && !data.found) {
+      notFound.textContent = '생성 메타데이터는 있지만, 지원하지 않는 노드이거나 실행 결과 문자열이 저장되지 않아 프롬프트를 추출하지 못했습니다.';
+    } else {
+      notFound.textContent = '이 이미지에서 프롬프트 메타데이터를 찾지 못했습니다. 메타데이터가 제거되었거나 지원하지 않는 프로그램으로 생성된 이미지일 수 있어요.';
+    }
+    $('promptWarning').textContent = data.prompt_warning || '';
+    $('promptWarning').classList.toggle('hidden', !data.prompt_warning);
     fillCard(cards.positive, data.positive);
     fillCard(cards.negative, data.negative);
     fillCard(cards.settings, data.settings);

@@ -130,30 +130,49 @@ _PASSTHROUGH_KEYS = (
 )
 
 
-def _encoded_texts(node: dict, nodes: dict) -> list[str]:
+def _encoded_texts(node: dict, nodes: dict, slot: int = 0, *, original: bool = False) -> list[str]:
     """CLIPTextEncode 계열 노드에서 프롬프트 문자열을 꺼낸다.
 
     ``text`` 입력이 링크(예: LLM 프롬프트 생성기 → CLIPTextEncode)면 연결된
     노드의 결과값을 그래프에서 찾아 해석한다.
     """
-    if not str(node.get("class_type", "")).startswith("CLIPTextEncode"):
+    class_type = str(node.get("class_type", ""))
+    if class_type == "TextEncodeQwenImage21":
+        keys = {0: ("prompt",), 1: ("negative_prompt",)}.get(slot, ())
+    elif class_type.startswith("CLIPTextEncode"):
+        keys = _TEXT_INPUT_KEYS
+    else:
         return []
     inputs = node.get("inputs")
     if not isinstance(inputs, dict):
         return []
     found = []
-    for key in _TEXT_INPUT_KEYS:
+    for key in keys:
         value = inputs.get(key)
         if isinstance(value, str) and value.strip():
             found.append(value.strip())
         elif isinstance(value, (list, tuple)) and value:
-            resolved = _resolve_linked_text(value, nodes)
-            if resolved:
-                found.append(resolved)
+            resolved = _resolve_linked_text(value, nodes, original=original)
+            if resolved and resolved.strip():
+                found.append(resolved.strip())
     return found
 
 
-def _resolve_linked_text(ref, nodes: dict, depth: int = 0) -> str | None:
+def _resolve_boolean(value, nodes: dict, depth: int = 0) -> bool | None:
+    """정적 불리언만 해석한다. 미확인 링크를 truthy로 취급하지 않는다."""
+    if depth > 20:
+        return None
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, (list, tuple)) or len(value) != 2 or value[1] != 0:
+        return None
+    node = nodes.get(str(value[0]))
+    if not isinstance(node, dict) or node.get("class_type") != "PrimitiveBoolean":
+        return None
+    return _resolve_boolean(node.get("inputs", {}).get("value"), nodes, depth + 1)
+
+
+def _resolve_linked_text(ref, nodes: dict, depth: int = 0, *, original: bool = False) -> str | None:
     """링크(["노드ID", 슬롯])를 거슬러 올라가 정적 텍스트 위젯 값을 찾는다.
 
     ComfyUI API 그래프는 노드의 '출력'을 저장하지 않는다. ShowText 계열에 남은
@@ -161,7 +180,11 @@ def _resolve_linked_text(ref, nodes: dict, depth: int = 0) -> str | None:
     와일드카드처럼 매 실행마다 결과가 바뀌는 노드에서는 실제 사용된 프롬프트와
     달라지므로 사용하지 않는다.
     """
-    if depth > 5 or not isinstance(ref, (list, tuple)) or not ref:
+    if depth > 20:
+        return None
+    if isinstance(ref, str):
+        return ref
+    if not isinstance(ref, (list, tuple)) or not ref:
         return None
     node = nodes.get(str(ref[0]))
     if not isinstance(node, dict):
@@ -173,25 +196,50 @@ def _resolve_linked_text(ref, nodes: dict, depth: int = 0) -> str | None:
     class_type = str(node.get("class_type", "")).lower()
     is_echo = any(hint in class_type for hint in _ECHO_NODE_HINTS)
 
+    # 출력이 아니라 실제 선택된 입력만 추적한다. 미리보기의 잔존 값은 쓰지 않는다.
+    if class_type == "previewany":
+        return _resolve_linked_text(inputs.get("source"), nodes, depth + 1, original=original)
+    if class_type == "comfyswitchnode":
+        switch = _resolve_boolean(inputs.get("switch"), nodes)
+        if not isinstance(switch, bool):
+            return None
+        key = "on_true" if switch else "on_false"
+        return _resolve_linked_text(inputs.get(key), nodes, depth + 1, original=original)
+    if class_type == "stringconcatenate":
+        parts = [
+            _resolve_linked_text(inputs.get(key), nodes, depth + 1, original=original)
+            for key in ("string_a", "string_b", "delimiter")
+        ]
+        if any(part is None for part in parts):
+            return None
+        return parts[0] + parts[2] + parts[1]
+    if class_type in ("primitivestring", "primitivestringmultiline"):
+        return _resolve_linked_text(inputs.get("value"), nodes, depth + 1, original=original)
+    if class_type == "textgenerate":
+        # 생성 결과는 API 그래프에 없다. 명시적인 원본 입력 폴백에서만 읽는다.
+        if not original or len(ref) < 2 or ref[1] != 0:
+            return None
+        return _resolve_linked_text(inputs.get("prompt"), nodes, depth + 1, original=original)
+
     for key in _STATIC_TEXT_KEYS:
         value = inputs.get(key)
         if isinstance(value, str) and value.strip() and not is_echo:
             return value.strip()
         if isinstance(value, (list, tuple)) and value:
-            resolved = _resolve_linked_text(value, nodes, depth + 1)
+            resolved = _resolve_linked_text(value, nodes, depth + 1, original=original)
             if resolved:
                 return resolved
     return None
 
 
-def _follow_conditioning(ref, nodes: dict, depth: int = 0) -> list[str]:
+def _follow_conditioning(ref, nodes: dict, depth: int = 0, *, original: bool = False) -> list[str]:
     """샘플러의 positive/negative 입력(링크)을 따라가 텍스트 인코더까지 도달한다."""
     if depth > 5 or not isinstance(ref, (list, tuple)) or not ref:
         return []
     node = nodes.get(str(ref[0]))
     if not isinstance(node, dict):
         return []
-    texts = _encoded_texts(node, nodes)
+    texts = _encoded_texts(node, nodes, ref[1] if len(ref) > 1 else 0, original=original)
     if texts:
         return texts
     inputs = node.get("inputs")
@@ -199,7 +247,7 @@ def _follow_conditioning(ref, nodes: dict, depth: int = 0) -> list[str]:
         return []
     collected: list[str] = []
     for key in _PASSTHROUGH_KEYS:
-        collected.extend(_follow_conditioning(inputs.get(key), nodes, depth + 1))
+        collected.extend(_follow_conditioning(inputs.get(key), nodes, depth + 1, original=original))
     return collected
 
 
@@ -264,10 +312,21 @@ def _parse_comfyui_api(graph: dict) -> dict:
         for node in nodes.values():
             positives.extend(_encoded_texts(node, nodes))
 
+    warning = None
+    if not positives:
+        for sampler in samplers:
+            positives.extend(_follow_conditioning(sampler["inputs"].get("positive"), nodes, original=True))
+        if not samplers:
+            for node in nodes.values():
+                positives.extend(_encoded_texts(node, nodes, original=True))
+        if positives:
+            warning = "보강 전 입력을 표시합니다. 보강기에 전달한 지시문이 함께 포함될 수 있습니다. 최종 보강 결과는 PNG에 저장되어 있지 않아 복원할 수 없습니다."
+
     return {
         "positive": "\n\n".join(_dedupe(positives)) or None,
         "negative": "\n\n".join(_dedupe(negatives)) or None,
         "settings": _comfy_settings(nodes, samplers),
+        "prompt_warning": warning,
     }
 
 
@@ -437,6 +496,7 @@ def extract_prompt_info(png_bytes: bytes) -> dict:
         "found": False,
         "positive": None,
         "positive_source": None,
+        "prompt_warning": None,
         "negative": None,
         "settings": None,
         "chunks": texts,
@@ -481,12 +541,14 @@ def extract_prompt_info(png_bytes: bytes) -> dict:
         result["positive"] = parsed.get("positive")
         result["negative"] = parsed.get("negative")
         result["settings"] = parsed.get("settings")
+        result["prompt_warning"] = parsed.get("prompt_warning")
 
-    if not result["positive"]:
+    if not result["positive"] or result["prompt_warning"]:
         text, key = _chunk_prompt_fallback(texts)
         if text:
             result["positive"] = text
             result["positive_source"] = key
+            result["prompt_warning"] = None
 
     result["found"] = bool(result["positive"] or result["negative"])
     return result
