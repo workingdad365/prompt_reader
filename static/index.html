@@ -206,6 +206,14 @@ details.raw summary { cursor: pointer; color: var(--muted); font-size: 14px; use
 
       <div id="promptWarning" class="notice hidden" role="status"></div>
 
+      <div id="finalCard" class="card hidden">
+        <div class="card-head">
+          <h2>최종 프롬프트 <span class="en">Final Prompt</span></h2>
+          <button class="btn copy" type="button" data-copy-target="finalText">복사</button>
+        </div>
+        <pre id="finalText" class="prompt-text"></pre>
+      </div>
+
       <div id="posCard" class="card">
         <div class="card-head">
           <h2>긍정 프롬프트 <span class="en">Positive Prompt</span></h2>
@@ -256,6 +264,7 @@ details.raw summary { cursor: pointer; color: var(--muted); font-size: 14px; use
   const preview = $('preview');
   const notFound = $('notFound');
   const cards = {
+    final: { card: $('finalCard'), text: $('finalText') },
     positive: { card: $('posCard'), text: $('posText') },
     negative: { card: $('negCard'), text: $('negText') },
     settings: { card: $('setCard'), text: $('setText') },
@@ -410,6 +419,13 @@ details.raw summary { cursor: pointer; color: var(--muted); font-size: 14px; use
 
     currentRaw = data.chunks || {};
     currentPretty = data.pretty_chunks || {};
+    const finalKey = Object.keys(currentRaw).find((key) => key.toLowerCase() === 'final prompt');
+    let finalPrompt = finalKey === undefined ? '' : currentRaw[finalKey];
+    try {
+      const decoded = JSON.parse(finalPrompt);
+      if (typeof decoded === 'string') finalPrompt = decoded;
+    } catch (e) { /* 일반 텍스트 청크는 원문으로 표시 */ }
+    fillCard(cards.final, finalPrompt);
     rawList.innerHTML = '';
     const keys = Object.keys(currentRaw);
     rawDetails.classList.toggle('hidden', keys.length === 0);
